@@ -67,33 +67,69 @@ python3 writing_loop.py --help
 python3 writing_loop.py "Write a 500-word essay on why curiosity is humanity's greatest trait"
 ```
 
-With options:
+Longer prompts from a file:
 
 ```bash
-python3 writing_loop.py "Write a 500-word essay on curiosity" \
-    --max-iterations 5 \
-    --writer-model sonnet \
-    --editor-model sonnet \
-    --output final_essay.md \
-    --verbose
+python3 writing_loop.py --prompt-file brief.md --output final.md
+```
+
+Polish an existing draft instead of writing from scratch:
+
+```bash
+python3 writing_loop.py "The piece is a blog post about X" \
+    --input-draft my-draft.md \
+    --output polished.md
+```
+
+Prompt via stdin (useful for pipelines):
+
+```bash
+echo "Write a tweet about curiosity" | python3 writing_loop.py -
 ```
 
 ### Arguments
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `prompt` | yes | The writing topic/instructions |
+| `prompt` | conditionally | The writing topic/instructions. Pass `-` to read from stdin. Optional if `--prompt-file` or `--input-draft` is given. |
 
 ### Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--prompt-file PATH` | _(none)_ | Read the prompt from a file instead of passing it inline |
+| `--input-draft PATH` | _(none)_ | Start from an existing draft file — iteration 1 skips the Writer and sends your draft straight to the Editor |
 | `--max-iterations` | `5` | Maximum number of write/edit cycles |
 | `--writer-model` | `sonnet` | Model alias for the Writer (e.g. `sonnet`, `opus`, `haiku`, or a full model ID) |
 | `--editor-model` | `sonnet` | Model alias for the Editor |
 | `--output PATH` | _(none)_ | Save the final draft to this path (always saved in the log dir regardless) |
 | `--log-dir DIR` | `~/.writing-loop/logs` | Where per-run log directories are created |
 | `--verbose` | off | Print full drafts and feedback to the terminal |
+
+## How the Editor rates each draft
+
+The Editor is required to begin every response with a score line:
+
+```
+SCORE: 7/10
+1. The opening hook is weak...
+2. Paragraph 3 has redundancy...
+```
+
+The orchestrator parses this and shows per-iteration progress:
+
+```
+  🔍  Editor is reviewing draft #3...      done (1.1s) — score 7/10 — revisions requested
+  🔍  Editor is reviewing draft #4...      done (0.9s) — score 10/10 — APPROVED ✓
+```
+
+## Accumulated feedback history
+
+On every revision, the Writer receives **all prior editor feedback**, not just the most recent round — so it doesn't regress on issues that earlier rounds already fixed. Earlier rounds are labeled `already addressed` to signal "preserve these improvements"; the latest round is labeled `LATEST feedback to address now`.
+
+## Reliability: retries with backoff
+
+`call_claude` automatically retries transient failures (non-zero exits, timeouts) with exponential backoff: 5s → 15s → 30s, up to 3 retries. A missing `claude` CLI is not retried — it fails immediately with an install hint.
 
 ## Example session
 
@@ -173,7 +209,7 @@ python3 -m coverage run --source=writing_loop -m unittest discover tests
 python3 -m coverage report -m
 ```
 
-Current coverage is **99%** — the only uncovered line is the `if __name__ == "__main__"` entry guard.
+Current coverage is **99%** (65 tests) — the only uncovered line is the `if __name__ == "__main__"` entry guard.
 
 ### Project layout
 
