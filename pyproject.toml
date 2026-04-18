@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "writing-loop"
+version = "1.2.0"
+description = "Writer/Editor self-improvement loop for iterative writing refinement"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Joseph" }]
+license = { text = "MIT" }
+keywords = ["claude", "writing", "agent", "llm", "editor"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Text Processing",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/josephgec/writing_loop"
+Repository = "https://github.com/josephgec/writing_loop"
+
+[project.scripts]
+writing-loop = "writing_loop:main"
+
+[tool.setuptools]
+py-modules = ["writing_loop"]

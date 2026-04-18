@@ -56,9 +56,16 @@ Requirements:
 Clone and run — no dependencies beyond the standard library.
 
 ```bash
-git clone <this repo>
-cd writing-loop
+git clone https://github.com/josephgec/writing_loop.git
+cd writing_loop
 python3 writing_loop.py --help
+```
+
+Or install as a proper command on your `$PATH`:
+
+```bash
+pip install .
+writing-loop --help
 ```
 
 ## Usage
@@ -98,13 +105,21 @@ echo "Write a tweet about curiosity" | python3 writing_loop.py -
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--prompt-file PATH` | _(none)_ | Read the prompt from a file instead of passing it inline |
-| `--input-draft PATH` | _(none)_ | Start from an existing draft file — iteration 1 skips the Writer and sends your draft straight to the Editor |
-| `--max-iterations` | `5` | Maximum number of write/edit cycles |
-| `--writer-model` | `sonnet` | Model alias for the Writer (e.g. `sonnet`, `opus`, `haiku`, or a full model ID) |
-| `--editor-model` | `sonnet` | Model alias for the Editor |
-| `--output PATH` | _(none)_ | Save the final draft to this path (always saved in the log dir regardless) |
+| `--input-draft PATH` | _(none)_ | Start from an existing draft — iteration 1 skips the Writer and sends your draft straight to the Editor |
+| `--max-iterations N` | `5` | Maximum number of write/edit cycles |
+| `--writer-model NAME` | `sonnet` | Model alias for the Writer (`sonnet`, `opus`, `haiku`, or a full model ID) |
+| `--editor-model NAME` | `sonnet` | Model alias for the Editor |
+| `--style STYLE` | `default` | Writing style preset: `default`, `academic`, `journalistic`, `fiction`, `technical`, `blog`, `persuasive` |
+| `--strictness LEVEL` | `standard` | Editor severity: `lenient`, `standard`, `harsh` |
+| `--target-words N` | _(none)_ | Target word count — Editor factors length compliance into its score |
+| `--approve-above N` | _(none)_ | Accept any draft scoring ≥ N/10 (in addition to literal `APPROVED`) |
+| `--plateau-window N` | `3` | Stop early if the last N scores are identical (`0` disables) |
+| `--format FMT` | `md` | Output format for `--output`: `md`, `txt`, `html` |
+| `--output PATH` | _(none)_ | Save the final draft to this path (always also saved in the log dir) |
 | `--log-dir DIR` | `~/.writing-loop/logs` | Where per-run log directories are created |
-| `--verbose` | off | Print full drafts and feedback to the terminal |
+| `--verbose` | off | Print full drafts and feedback inline |
+| `--quiet` | off | Suppress progress output |
+| `--json` | off | Emit a structured JSON summary to stdout (implies `--quiet`) |
 
 ## How the Editor rates each draft
 
@@ -130,6 +145,28 @@ On every revision, the Writer receives **all prior editor feedback**, not just t
 ## Reliability: retries with backoff
 
 `call_claude` automatically retries transient failures (non-zero exits, timeouts) with exponential backoff: 5s → 15s → 30s, up to 3 retries. A missing `claude` CLI is not retried — it fails immediately with an install hint.
+
+## Plateau detection
+
+If the Editor returns the same score for `--plateau-window` iterations in a row (default: 3), the loop stops early and exits with code `3` — the draft has converged and more iterations are unlikely to help.
+
+## JSON mode (for scripting / CI)
+
+`--json` emits a structured summary to stdout instead of human-readable progress:
+
+```json
+{
+  "status": "approved",
+  "iterations": 3,
+  "scores": [4, 7, 10],
+  "log_dir": "/Users/you/.writing-loop/logs/20260417_143022",
+  "output_path": "final.md",
+  "output_format": "md",
+  "final_draft": "..."
+}
+```
+
+`status` is one of `approved`, `max_iterations`, `plateau`, or `interrupted`. This plays well with CI writing-quality gates: `writing-loop --json ... | jq '.scores[-1]'`.
 
 ## Example session
 
@@ -179,9 +216,15 @@ Every call in and out of Claude is written to disk, so you can inspect exactly w
 
 ## How the Editor decides
 
-The Editor is prompted to be demanding — it reviews along ten dimensions (clarity, structure, voice, word choice, sentence rhythm, opening strength, argument quality, redundancy, clichés, overall impact) and returns 3–5 numbered, actionable notes.
+The Editor reviews along ten dimensions (clarity, structure, voice, word choice, sentence rhythm, opening strength, argument quality, redundancy, clichés, overall impact) and returns 3–5 numbered, actionable notes, preceded by a `SCORE: N/10` line.
 
-The loop terminates when the Editor's response **starts with the literal token `APPROVED` on its own line**. Anything else is treated as feedback and routed back to the Writer for revision. If the iteration cap is reached first, the most recent draft is saved as a best-effort final.
+The Editor also receives its own prior feedback each round, so it can verify that earlier notes were addressed and avoid repeating itself.
+
+Approval triggers:
+1. The Editor's verdict line contains `APPROVED` (tolerant to phrasings like `APPROVED — great work`, `APPROVED: strong piece`, or `Overall: APPROVED`). Negations (`NOT APPROVED`) and numbered feedback items are rejected.
+2. **Or** the score is `>= --approve-above N` if that flag is set.
+
+If the iteration cap or plateau is reached first, the most recent draft is saved as best-effort.
 
 ## Exit codes
 
@@ -189,6 +232,7 @@ The loop terminates when the Editor's response **starts with the literal token `
 |------|---------|
 | `0` | Editor approved |
 | `2` | Max iterations hit without approval |
+| `3` | Plateau detected — scores stopped improving |
 | `130` | User interrupted (`Ctrl+C`) |
 
 ## Development
@@ -209,22 +253,24 @@ python3 -m coverage run --source=writing_loop -m unittest discover tests
 python3 -m coverage report -m
 ```
 
-Current coverage is **99%** (65 tests) — the only uncovered line is the `if __name__ == "__main__"` entry guard.
+Current coverage is **99%** (103 tests) — the only uncovered line is the `if __name__ == "__main__"` entry guard.
 
 ### Project layout
 
 ```
-writing-loop/
+writing_loop/
 ├── writing_loop.py          # Main orchestrator (all logic lives here)
+├── pyproject.toml           # pip-installable package metadata
 ├── README.md
 ├── .gitignore
 └── tests/
-    └── test_writing_loop.py # 33 unit + integration tests
+    └── test_writing_loop.py # Unit + integration tests (subprocess mocked)
 ```
 
 ## Design notes
 
-- **Single file.** All orchestration lives in `writing_loop.py`. No frameworks, no package structure, no plugins.
+- **Single file.** All orchestration lives in `writing_loop.py`. No frameworks, no plugins.
 - **No hidden state between calls.** Each Claude invocation is a fresh `--print` call with an explicit user message. What you see in the log files is exactly what the model saw.
-- **`APPROVED` is the stop signal.** Simple string match on the first line. No JSON parsing, no scoring rubric.
+- **Symmetric feedback.** Both the Writer and the Editor receive their own accumulated history — the Writer to avoid regressing on earlier fixes, the Editor to avoid contradicting itself.
+- **Tolerant approval matching.** The loop accepts many natural phrasings of approval (`APPROVED`, `APPROVED — excellent`, `Overall: APPROVED`) while rejecting negations and feedback items. The optional `--approve-above N` threshold adds a numerical escape hatch.
 - **Logs are the source of truth.** If a run looks off, open the log directory.
